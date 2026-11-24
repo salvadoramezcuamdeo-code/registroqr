@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Registro QR" />
+  <title>Registro QR – Tareas y Actividades</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- Banner de nueva versión del Service Worker -->
+  <div id="update-banner" class="update-banner hidden" role="button" tabindex="0">
+    <span>🔄 Hay una nueva versión, toca para actualizar</span>
+  </div>
+
+  <!-- Banner de recordatorio de respaldo (> 7 días) -->
+  <div id="backup-reminder-banner" class="backup-banner hidden">
+    <div class="backup-banner-text">
+      <strong>⚠️ Respaldo pendiente:</strong> Han pasado más de 7 días desde tu último respaldo.
+    </div>
+    <div class="backup-banner-actions">
+      <button type="button" id="btn-banner-backup" class="btn btn-sm btn-primary">Respaldar ahora</button>
+      <button type="button" id="btn-banner-dismiss" class="btn-icon-close" aria-label="Cerrar aviso">✕</button>
+    </div>
+  </div>
+
+  <!-- Contenedor principal de la aplicación -->
+  <div id="app-shell" class="app-shell">
+    <!-- Encabezado superior -->
+    <header class="app-header no-print">
+      <div class="header-brand">
+        <img src="./icons/icon-192.png" alt="Icono" class="header-icon" />
+        <div>
+          <h1 class="header-title">Registro QR</h1>
+          <span id="header-subtitle" class="header-subtitle">Control de entregas offline</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-theme-toggle" class="icon-btn" title="Cambiar modo claro/oscuro" aria-label="Cambiar tema">
+          🌙
+        </button>
+      </div>
+    </header>
+
+    <!-- Área de contenido por pestañas -->
+    <main class="app-main no-print">
+      <!-- ==================== PESTAÑA 1: ESCANEAR ==================== -->
+      <section id="tab-escanear" class="tab-view active">
+        <!-- Barra fija con actividad activa -->
+        <div class="active-activity-bar card">
+          <div class="active-activity-header">
+            <span class="badge badge-primary" id="scan-activity-type">Actividad activa</span>
+            <span class="live-counter" id="scan-live-counter">0/0 entregados</span>
+          </div>
+
+          <div class="active-activity-selector">
+            <select id="select-active-activity" class="input-select" aria-label="Seleccionar actividad activa">
+              <option value="">-- Selecciona o crea una actividad --</option>
+            </select>
+            <button type="button" id="btn-quick-new-activity" class="btn btn-secondary" title="Crear nueva actividad">
+              + Nueva
+            </button>
+          </div>
+
+          <div id="active-activity-details" class="active-activity-details hidden">
+            <div class="activity-meta-grid">
+              <span id="scan-activity-points">⭐ 1 pt</span>
+              <span id="scan-activity-group">👥 Todos los grupos</span>
+              <span id="scan-activity-deadline">⏰ Sin fecha límite</span>
+            </div>
+            <p id="scan-activity-desc" class="activity-desc-small"></p>
+          </div>
+        </div>
+
+        <!-- Aviso cuando no hay actividad seleccionada -->
+        <div id="no-activity-warning" class="empty-state card">
+          <div class="empty-icon">📋</div>
+          <h2>Primero selecciona o crea una actividad</h2>
+          <p>Para comenzar a escanear códigos QR de tus alumnos, elige una actividad existente arriba o crea una nueva.</p>
+          <button type="button" id="btn-goto-create-activity" class="btn btn-primary btn-lg">
+            + Crear actividad ahora
+          </button>
+        </div>
+
+        <!-- Controles de cámara y escaneo -->
+        <div id="scanner-workspace" class="scanner-workspace hidden">
+          <!-- Retroalimentación visual de lectura (Verde / Amarillo / Rojo) -->
+          <div id="scan-feedback-box" class="scan-feedback-box hidden" role="status" aria-live="polite">
+            <div class="feedback-icon" id="feedback-icon">✓</div>
+            <div class="feedback-body">
+              <h3 id="feedback-title">Entrega registrada</h3>
+              <p id="feedback-student" class="feedback-student"></p>
+              <p id="feedback-meta" class="feedback-meta"></p>
+            </div>
+          </div>
+
+          <!-- Visor de cámara en vivo -->
+          <div class="camera-card card">
+            <div id="qr-reader" class="qr-reader-box"></div>
+
+            <!-- Estado de pausa de 2 segundos entre lecturas -->
+            <div id="scan-cooldown-overlay" class="scan-cooldown-overlay hidden">
+              <span>⏳ Pausa (2 s)... siguiente alumno</span>
+            </div>
+
+            <!-- Mensaje de error si se niega el permiso de cámara -->
+            <div id="camera-error-box" class="camera-error-box hidden">
+              <h4>🚫 No se pudo acceder a la cámara</h4>
+              <p id="camera-error-msg">Permiso denegado o cámara no disponible.</p>
+              <div class="camera-instructions">
+                <strong>¿Cómo activar el permiso de cámara?</strong>
+                <ul>
+                  <li><strong>Android (Chrome):</strong> Toca el ícono de candado o ajustes junto a la barra de direcciones → <em>Permisos</em> → <em>Cámara</em> → <em>Permitir</em>, y recarga la página.</li>
+                  <li><strong>iPhone (Safari):</strong> Toca el botón <em>aA</em> o el ícono en la barra de direcciones → <em>Configuración del sitio web</em> → <em>Cámara</em> → <em>Permitir</em> (o ve a Ajustes → Safari → Cámara).</li>
+                </ul>
+                <p>💡 Mientras tanto, puedes usar el botón <strong>"Escanear desde foto"</strong> o el <strong>"Registro manual"</strong> de abajo.</p>
+              </div>
+            </div>
+
+            <div class="camera-controls hidden" id="fallback-file-controls">
+              <label for="qr-file-input" class="btn btn-secondary btn-sm btn-block file-scan-label">
+                🖼️ Escanear QR desde foto
+              </label>
+              <input
+                type="file"
+                id="qr-file-input"
+                accept="image/*"
+                capture="environment"
+                class="hidden"
+              />
+            </div>
+          </div>
+
+          <!-- Botón Deshacer última entrega -->
+          <div id="undo-bar" class="undo-bar card hidden">
+            <div class="undo-info">
+              <span>Última: <strong id="undo-student-name"></strong></span>
+              <small id="undo-time"></small>
+            </div>
+            <button type="button" id="btn-undo-last" class="btn btn-warning btn-sm">
+              ↩ Deshacer última entrega
+            </button>
+          </div>
+
+          <!-- Registro manual por nombre o matrícula -->
+          <div class="manual-register-card card">
+            <h3>✍️ Registro manual (si el QR está dañado)</h3>
+            <div class="search-box">
+              <input
+                type="search"
+                id="manual-student-search"
+                class="input-text"
+                placeholder="Buscar alumno por nombre o matrícula..."
+                autocomplete="off"
+              />
+            </div>
+            <div id="manual-search-results" class="manual-results-list"></div>
+          </div>
+
+          <!-- Lista de entregas recientes de esta actividad -->
+          <div class="recent-deliveries-card card">
+            <div class="section-header-inline">
+              <h3>Entregas de esta actividad</h3>
+              <span id="recent-count-badge" class="badge">0</span>
+            </div>
+            <div id="active-deliveries-list" class="deliveries-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== PESTAÑA 2: ACTIVIDADES ==================== -->
+      <section id="tab-actividades" class="tab-view">
+        <div class="section-top-bar">
+          <h2>Actividades</h2>
+          <button type="button" id="btn-open-activity-modal" class="btn btn-primary">
+            + Nueva actividad
+          </button>
+        </div>
+
+        <div class="filters-bar card">
+          <input
+            type="search"
+            id="filter-activities-search"
+            class="input-text"
+            placeholder="Buscar actividad por nombre o descripción..."
+          />
+          <div class="filters-row-2">
+            <select id="filter-activities-type" class="input-select">
+              <option value="">Todos los tipos</option>
+              <option value="Tarea">Tarea</option>
+              <option value="Actividad en clase">Actividad en clase</option>
+              <option value="Proyecto">Proyecto</option>
+              <option value="Examen">Examen</option>
+              <option value="Otro">Otro</option>
+            </select>
+            <select id="filter-activities-group" class="input-select">
+              <option value="">Todos los grupos</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="activities-list" class="cards-list"></div>
+      </section>
+
+      <!-- ==================== PESTAÑA 3: ALUMNOS ==================== -->
+      <section id="tab-alumnos" class="tab-view">
+        <div class="section-top-bar">
+          <h2>Alumnos</h2>
+          <div class="btn-group-wrap">
+            <label for="quick-excel-upload" class="btn btn-primary file-scan-label">
+              📗 Subir Excel (.xlsx / .csv)
+            </label>
+            <input
+              type="file"
+              id="quick-excel-upload"
+              accept=".xlsx,.xls,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+              class="hidden"
+            />
+            <button type="button" id="btn-open-student-modal" class="btn btn-secondary">
+              + Nuevo alumno
+            </button>
+            <button type="button" id="btn-open-import-modal" class="btn btn-secondary">
+              📋 Pegar lista
+            </button>
+            <button type="button" id="btn-open-print-view" class="btn btn-secondary">
+              🖨️ Imprimir / Descargar todos los QR
+            </button>
+          </div>
+        </div>
+
+        <div class="filters-bar card">
+          <input
+            type="search"
+            id="filter-students-search"
+            class="input-text"
+            placeholder="Buscar por nombre o matrícula..."
+          />
+          <select id="filter-students-group" class="input-select">
+            <option value="">Todos los grupos</option>
+          </select>
+        </div>
+
+        <div id="students-count-summary" class="list-summary-text">0 alumnos registrados</div>
+        <div id="students-list" class="cards-list"></div>
+      </section>
+
+      <!-- ==================== PESTAÑA 4: REPORTES ==================== -->
+      <section id="tab-reportes" class="tab-view">
+        <div class="section-top-bar">
+          <h2>Sumatoria y Reportes</h2>
+          <div class="btn-group-wrap">
+            <button type="button" id="btn-export-deliveries-csv" class="btn btn-secondary btn-sm">
+              📊 CSV Entregas
+            </button>
+            <button type="button" id="btn-export-matrix-csv" class="btn btn-secondary btn-sm">
+              📋 CSV Tabla General
+            </button>
+          </div>
+        </div>
+
+        <!-- Filtros globales de reportes -->
+        <div class="filters-bar card">
+          <div class="filters-row-2">
+            <div>
+              <label for="report-filter-group" class="field-label-sm">Grupo</label>
+              <select id="report-filter-group" class="input-select">
+                <option value="">Todos los grupos</option>
+              </select>
+            </div>
+            <div>
+              <label for="report-filter-type" class="field-label-sm">Tipo de actividad</label>
+              <select id="report-filter-type" class="input-select">
+                <option value="">Todos los tipos</option>
+                <option value="Tarea">Tarea</option>
+                <option value="Actividad en clase">Actividad en clase</option>
+                <option value="Proyecto">Proyecto</option>
+                <option value="Examen">Examen</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+          </div>
+          <div class="filters-row-2">
+            <div>
+              <label for="report-filter-date-from" class="field-label-sm">Desde fecha</label>
+              <input type="date" id="report-filter-date-from" class="input-text" />
+            </div>
+            <div>
+              <label for="report-filter-date-to" class="field-label-sm">Hasta fecha</label>
+              <input type="date" id="report-filter-date-to" class="input-text" />
+            </div>
+          </div>
+          <div>
+            <input
+              type="search"
+              id="report-filter-student-search"
+              class="input-text"
+              placeholder="Buscar alumno por nombre o matrícula..."
+            />
+          </div>
+        </div>
+
+        <!-- Sub-navegación de vistas de reporte -->
+        <div class="subtabs-bar">
+          <button type="button" class="subtab-btn active" data-report-view="matrix">
+            Tabla General
+          </button>
+          <button type="button" class="subtab-btn" data-report-view="by-student">
+            Por Alumno
+          </button>
+          <button type="button" class="subtab-btn" data-report-view="by-activity">
+            Por Actividad
+          </button>
+        </div>
+
+        <!-- Vista 1: Tabla General (Matriz alumnos x actividades) -->
+        <div id="report-view-matrix" class="report-subview active">
+          <div class="card">
+            <div class="matrix-legend">
+              <span><strong class="status-ok">✓</strong> A tiempo</span>
+              <span><strong class="status-late">⏰</strong> Entrega tardía</span>
+              <span><strong class="status-miss">✗</strong> No entregado</span>
+            </div>
+            <div id="report-matrix-container" class="table-responsive"></div>
+          </div>
+        </div>
+
+        <!-- Vista 2: Por Alumno -->
+        <div id="report-view-by-student" class="report-subview hidden">
+          <div id="report-students-cards" class="cards-list"></div>
+        </div>
+
+        <!-- Vista 3: Por Actividad -->
+        <div id="report-view-by-activity" class="report-subview hidden">
+          <div class="card">
+            <label for="report-select-single-activity" class="field-label">Selecciona una actividad para ver detalle</label>
+            <select id="report-select-single-activity" class="input-select"></select>
+          </div>
+          <div id="report-activity-detail-container"></div>
+        </div>
+      </section>
+
+      <!-- ==================== PESTAÑA 5: CONFIGURACIÓN ==================== -->
+      <section id="tab-configuracion" class="tab-view">
+        <h2>Configuración y Respaldo</h2>
+
+        <!-- Exportación a CSV (Excel) -->
+        <div class="card settings-card">
+          <h3>📊 Exportar para Excel (CSV UTF-8 con BOM)</h3>
+          <p class="settings-desc">
+            Archivos CSV listos para abrir en Microsoft Excel o Google Sheets conservando acentos y eñes correctamente.
+          </p>
+          <div class="settings-btn-stack">
+            <button type="button" id="btn-settings-csv-deliveries" class="btn btn-primary btn-block">
+              📥 Descargar CSV de todas las entregas
+            </button>
+            <button type="button" id="btn-settings-csv-matrix" class="btn btn-secondary btn-block">
+              📋 Descargar CSV de Tabla General
+            </button>
+          </div>
+        </div>
+
+        <!-- Respaldo y restauración JSON -->
+        <div class="card settings-card">
+          <h3>💾 Respaldo Completo (JSON)</h3>
+          <p class="settings-desc">
+            Guarda una copia de todos tus alumnos, actividades y entregas para cambiar de teléfono o prevenir pérdida de datos.
+          </p>
+          <p id="last-backup-info" class="backup-status-text">Último respaldo: Nunca</p>
+          <div class="settings-btn-stack">
+            <button type="button" id="btn-export-json-backup" class="btn btn-primary btn-block">
+              ⬆️ Exportar respaldo completo (.json)
+            </button>
+            <label for="input-import-json-backup" class="btn btn-secondary btn-block file-scan-label">
+              ⬇️ Importar respaldo (.json)
+            </label>
+            <input type="file" id="input-import-json-backup" accept=".json,application/json" class="hidden" />
+          </div>
+        </div>
+
+        <!-- Zona de peligro: Borrar todos los datos -->
+        <div class="card settings-card danger-zone">
+          <h3>⚠️ Zona de Peligro</h3>
+          <p class="settings-desc">
+            Elimina permanentemente todos los alumnos, actividades y entregas almacenados en este dispositivo. Requiere doble confirmación.
+          </p>
+          <button type="button" id="btn-wipe-all-data" class="btn btn-danger btn-block">
+            🗑️ Borrar todos los datos
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Navegación inferior fija (Mobile First) -->
+    <nav class="bottom-nav no-print" aria-label="Navegación principal">
+      <button type="button" class="nav-item active" data-tab="tab-escanear">
+        <span class="nav-icon">📷</span>
+        <span class="nav-label">Escanear</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="tab-actividades">
+        <span class="nav-icon">📝</span>
+        <span class="nav-label">Actividades</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="tab-alumnos">
+        <span class="nav-icon">🎓</span>
+        <span class="nav-label">Alumnos</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="tab-reportes">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Reportes</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="tab-configuracion">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Configuración</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ==================== MODALES ==================== -->
+
+  <!-- Modal: Crear / Editar Alumno -->
+  <div id="modal-student" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-student-title">Nuevo Alumno</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-student">✕</button>
+      </div>
+      <form id="form-student">
+        <input type="hidden" id="student-id-hidden" />
+        <div class="form-group">
+          <label for="student-matricula" class="field-label">Matrícula o Número de lista *</label>
+          <input
+            type="text"
+            id="student-matricula"
+            class="input-text"
+            placeholder="Ej. A012345 o 15"
+            required
+          />
+          <small class="field-hint">Este identificador único se codificará en el código QR del alumno.</small>
+        </div>
+        <div class="form-group">
+          <label for="student-nombre" class="field-label">Nombre completo *</label>
+          <input
+            type="text"
+            id="student-nombre"
+            class="input-text"
+            placeholder="Ej. María Fernanda López García"
+            required
+          />
+        </div>
+        <div class="form-group">
+          <label for="student-grupo" class="field-label">Grupo (opcional)</label>
+          <input
+            type="text"
+            id="student-grupo"
+            class="input-text"
+            placeholder="Ej. 3A, 2B, Matutino"
+          />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-student">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar alumno</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Importar Alumnos por Excel / CSV / Texto -->
+  <div id="modal-import-students" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Subir Excel o Pegar Lista de Alumnos</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-import-students">✕</button>
+      </div>
+      <form id="form-import-students">
+        <p class="settings-desc">
+          Sube tu archivo de <strong>Excel (<code>.xlsx</code>, <code>.xls</code>)</strong> o <strong>CSV</strong>, o pega tu lista. Si tu Excel solo trae los nombres, <strong>se les asignará un ID y su código QR automáticamente</strong>.
+        </p>
+        <div class="form-group">
+          <label for="import-csv-file" class="btn btn-primary btn-block file-scan-label">
+            📗 Seleccionar archivo Excel (.xlsx / .xls / .csv)
+          </label>
+          <input
+            type="file"
+            id="import-csv-file"
+            accept=".xlsx,.xls,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/plain,text/csv"
+            class="hidden"
+          />
+        </div>
+        <div class="form-group">
+          <label for="import-students-textarea" class="field-label-sm">Vista previa / Lista a importar (Matrícula, Nombre, Grupo):</label>
+          <textarea
+            id="import-students-textarea"
+            class="input-textarea"
+            rows="7"
+            placeholder="101, Juan Pérez Hernández, 3A&#10;102, Ana Sofía Martínez Ruiz, 3A&#10;103, Carlos Eduardo Gómez Díaz, 3B"
+            required
+          ></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-import-students">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Importar y generar QRs</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Ver QR Individual de un Alumno -->
+  <div id="modal-single-qr" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-center">
+      <div class="modal-header">
+        <h3 id="single-qr-title">Código QR del Alumno</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-single-qr">✕</button>
+      </div>
+      <div id="single-qr-canvas-wrap" class="single-qr-box"></div>
+      <p id="single-qr-name" class="qr-card-name"></p>
+      <p id="single-qr-meta" class="qr-card-meta"></p>
+      <div class="modal-actions">
+        <button type="button" id="btn-download-single-qr" class="btn btn-primary">
+          ⬇️ Descargar PNG
+        </button>
+        <button type="button" class="btn btn-secondary" data-close-modal="modal-single-qr">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Crear / Editar Actividad -->
+  <div id="modal-activity" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-activity-title">Nueva Actividad</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-activity">✕</button>
+      </div>
+      <form id="form-activity">
+        <input type="hidden" id="activity-id-hidden" />
+        <div class="form-group">
+          <label for="activity-nombre" class="field-label">Nombre de la actividad *</label>
+          <input
+            type="text"
+            id="activity-nombre"
+            class="input-text"
+            placeholder="Ej. Tarea 3 – Ecuaciones"
+            required
+          />
+        </div>
+        <div class="form-group">
+          <label for="activity-descripcion" class="field-label">Descripción</label>
+          <textarea
+            id="activity-descripcion"
+            class="input-textarea"
+            rows="2"
+            placeholder="Ej. Ejercicios de la página 45 a 47 con procedimiento"
+          ></textarea>
+        </div>
+        <div class="filters-row-2">
+          <div class="form-group">
+            <label for="activity-tipo" class="field-label">Tipo *</label>
+            <select id="activity-tipo" class="input-select" required>
+              <option value="Tarea">Tarea</option>
+              <option value="Actividad en clase">Actividad en clase</option>
+              <option value="Proyecto">Proyecto</option>
+              <option value="Examen">Examen</option>
+              <option value="Otro">Otro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="activity-puntos" class="field-label">Valor o puntos</label>
+            <input
+              type="number"
+              id="activity-puntos"
+              class="input-text"
+              value="1"
+              min="0"
+              step="0.5"
+              required
+            />
+          </div>
+        </div>
+        <div class="filters-row-2">
+          <div class="form-group">
+            <label for="activity-fecha-limite" class="field-label">Fecha y hora límite (opcional)</label>
+            <input
+              type="datetime-local"
+              id="activity-fecha-limite"
+              class="input-text"
+            />
+          </div>
+          <div class="form-group">
+            <label for="activity-grupo" class="field-label">Grupo al que aplica (opcional)</label>
+            <input
+              type="text"
+              id="activity-grupo"
+              class="input-text"
+              placeholder="Ej. 3A (vacío = todos)"
+            />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-activity">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar actividad</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Historial de entregas de un Alumno -->
+  <div id="modal-student-history" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3 id="student-history-title">Historial del Alumno</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-student-history">✕</button>
+      </div>
+      <div id="student-history-summary" class="history-summary-grid"></div>
+      <div id="student-history-list" class="deliveries-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-close-modal="modal-student-history">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Borrar todos los datos (Doble confirmación) -->
+  <div id="modal-wipe-data" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>⚠️ Confirmar borrado total</h3>
+        <button type="button" class="btn-icon-close" data-close-modal="modal-wipe-data">✕</button>
+      </div>
+      <form id="form-wipe-data" autocomplete="off">
+        <p class="settings-desc">
+          Esta acción borrará <strong>todos los alumnos, actividades y entregas</strong> de este teléfono y no se puede deshacer.
+        </p>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="wipe-confirm-check-1" required />
+            <span>Entiendo que se borrarán todos los registros permanentemente.</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="wipe-confirm-check-2" required />
+            <span>Confirmo por segunda vez que ya descargué mi respaldo o deseo iniciar de cero.</span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-wipe-data">Cancelar</button>
+          <button type="submit" class="btn btn-danger">Borrar todo definitivamente</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== VISTA DE IMPRESIÓN DE CREDENCIALES QR (CARTA) ==================== -->
+  <div id="print-sheet-overlay" class="print-sheet-overlay hidden">
+    <div class="print-toolbar no-print">
+      <div class="print-toolbar-left">
+        <h3>🖨️ Hoja de Credenciales QR (Tamaño Carta)</h3>
+        <select id="print-filter-group" class="input-select">
+          <option value="">Todos los grupos</option>
+        </select>
+      </div>
+      <div class="print-toolbar-actions">
+        <button type="button" id="btn-trigger-print" class="btn btn-primary">
+          🖨️ Imprimir / Guardar PDF
+        </button>
+        <button type="button" id="btn-download-qr-sheet-png" class="btn btn-secondary">
+          🖼️ Descargar lámina PNG
+        </button>
+        <button type="button" id="btn-close-print-view" class="btn btn-danger">
+          ✕ Cerrar
+        </button>
+      </div>
+    </div>
+
+    <div class="print-page-container">
+      <div class="print-sheet-header">
+        <h2>Credenciales de Entrega con Código QR</h2>
+        <p id="print-sheet-subtitle">Grupo: Todos</p>
+      </div>
+      <div id="print-qr-grid" class="print-qr-grid"></div>
+    </div>
+  </div>
+
+  <!-- Toast de notificaciones generales -->
+  <div id="toast-container" class="toast-container no-print" aria-live="polite"></div>
+
+  <!-- Contenedor oculto para escaneo de imagen con html5-qrcode -->
+  <div id="qr-file-temp-reader" class="hidden"></div>
+
+  <!-- Librerías locales (NO desde CDN) -->
+  <script src="./lib/html5-qrcode.min.js"></script>
+  <script src="./lib/qrcode.min.js"></script>
+  <script src="./lib/xlsx.full.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
